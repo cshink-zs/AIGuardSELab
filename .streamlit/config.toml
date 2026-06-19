@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#236BF5"      # Zscaler Blue
+backgroundColor = "#FFFFFF"   # Crisp White Background
+secondaryBackgroundColor = "#F4F7FB" # Light Grayish Blue
+textColor = "#1E293B"         # Dark Slate for readability
+font = "sans-serif"
