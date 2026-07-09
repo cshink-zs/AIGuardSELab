@@ -35,10 +35,10 @@ from langchain_core.tools import create_retriever_tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
-
+##load config from .env file
 from dotenv import load_dotenv
 
-from datasets import load_dataset
+
 
 
 
@@ -48,12 +48,14 @@ st.divider()
 
 load_dotenv()
 
-
 api_key = os.getenv("GUARDRAIL_API_KEY")
+policy_id = os.getenv("GUARDRAIL_POLICY_ID")
+
+
 ##global variables initialized
 guard = AIGuardClient(
     bearer_token=api_key,
-    policy_id="1190",
+    policy_id=policy_id,
 )
 
 ##DLP test tool allowing us to test DLP modules
@@ -148,7 +150,7 @@ if "mode" not in st.session_state:
 def get_agent_anthropic():
     print("Creating agent")
     ##model=gpt-4.1
-    systemprompt="You are a virtual assistant. Always invoke query_knowledge_base before answering questions."
+    systemprompt="You are a virtual assistant. Always invoke query_knowledge_base before answering questions. Great the user and say hello, I am ZAgent !! "
     ##ChatAnthropic(base_url="https://proxy.zseclipse.com",default_headers={"X-ApiKey": ""})
 
     vtools=  asyncio.run(initiateMCP())
@@ -158,7 +160,8 @@ def get_agent_anthropic():
 
     # 1. Initialize your local Ollama model
     if st.session_state.mode == "Proxy":
-        llmanthropic = ChatAnthropic(model="claude-haiku-4-5-20251001",base_url="https://proxy.zseclipse.net",default_headers={"X-ApiKey":"FLQ3GhPx-5eJk3kmvbEagi3egti_RXTCcq-kC_qwupo"})
+        api_key_proxy = os.getenv("GUARDRAIL_PROXY_API_KEY")
+        llmanthropic = ChatAnthropic(model="claude-haiku-4-5-20251001",base_url="https://proxy.zseclipse.net",default_headers={"X-ApiKey":api_key_proxy})
     else:
         llmanthropic = ChatAnthropic(model="claude-haiku-4-5-20251001")
 
@@ -175,6 +178,7 @@ def get_agent_anthropic():
     vtools.append(vector_tool)
     if st.session_state.mode == "Proxy":
         return create_agent(llmanthropic, system_prompt=systemprompt, tools=vtools, checkpointer=InMemorySaver()), vector_store
+
 
     return create_agent(llmanthropic,system_prompt=systemprompt,tools=vtools, middleware=[InspectPrompt, InspectResponse],checkpointer=InMemorySaver()),vector_store
 
@@ -208,11 +212,9 @@ def get_agent():
 
 def generate_response(input_text: str):
         answer_box = st.empty()
+        print(input_text)
+        result =  asyncio.run(st.session_state.agent.ainvoke({"messages": [{"role": "user", "content": input_text}]},{"configurable": {"thread_id": "1"}}))
 
-        result =  asyncio.run(st.session_state.agent.ainvoke(
-            {"messages": [{"role": "user", "content": input_text}]},
-            {"configurable": {"thread_id": "1"}},
-        ))
 
         last_message = result["messages"][-1]
         answer_box.markdown(last_message.content)
@@ -290,7 +292,7 @@ if "vectorstore" not in st.session_state:
 if "rag_chain" not in st.session_state:
     st.session_state.rag_chain = None
 
-
+##initialize agent and vector store
 st.session_state.agent,st.session_state.vectorstore = get_agent_anthropic()
 
 # Display chat messages from history on app rerun

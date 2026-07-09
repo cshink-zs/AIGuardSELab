@@ -1,5 +1,12 @@
+from typing import Any
+
 import requests
 from dataclasses import dataclass
+#from langchain.agents.middleware import AgentMiddleware, AgentState
+#from langchain.agents.middleware.types import StateT
+#from langgraph.runtime import Runtime
+#from langgraph.typing import ContextT
+
 
 @dataclass
 class GuardResult:
@@ -62,3 +69,12 @@ class AIGuardClient:
 
         safe_content = res.masked_content if res.masked_content else content
         return safe_content, res
+
+
+#class AIGuardMiddleware(AgentMiddleware):
+
+ #   def before_model(self, state: StateT, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
+ #       return None
+
+  #  def after_model(self, state: StateT, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
+   #     return None
