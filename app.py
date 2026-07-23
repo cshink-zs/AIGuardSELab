@@ -3,44 +3,17 @@
 # from the LLM.
 ##  user prompt --> AI Guard (allow, block, etc)  --> LLM -> AI Guard (allow, block, etc) -->
 ## Middleware is used to insert AI Guard beforeAgent and after Agent
-import json
-import threading, time
 import asyncio
-from langchain_anthropic import ChatAnthropic
-from langchain_classic.chains.openai_functions import create_tagging_chain
-from langchain_core.documents import Document
-from langchain_core.vectorstores import InMemoryVectorStore
 
-from aiguard_utils import AIGuardClient
-
-from langchain.agents import create_agent
-from langchain.agents.middleware import AgentState,before_agent, after_agent
-from langchain.messages import AIMessage,ToolMessage
-from langgraph.runtime import Runtime
-from langgraph.checkpoint.memory import InMemorySaver
-from typing import Any, Dict, Optional, Tuple
-import os
 import streamlit as st
-from langchain_ollama import ChatOllama
-
-
-
-##RAG##
-from langchain_ollama import OllamaEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.tools import create_retriever_tool
-##END RAG##
-
-
-##mcp tools
-from langchain_mcp_adapters.client import MultiServerMCPClient
-
-
-##load config from .env file
 from dotenv import load_dotenv
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+import agent_core
+from agent_core import build_agent
 
-# --- Inspection toggles (UI) ---
+# --- Session state defaults ---
 if "inspect_prompt_enabled" not in st.session_state:
     st.session_state.inspect_prompt_enabled = True
 
@@ -53,7 +26,9 @@ if "provider" not in st.session_state:
 if "model" not in st.session_state:
     st.session_state.model = "claude-haiku-4-5-20251001"
 
-# Initialize chat history
+if "mode" not in st.session_state:
+    st.session_state.mode = "DAS"
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -61,8 +36,6 @@ if "agent" not in st.session_state:
     st.session_state.agent = None
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
-if "rag_chain" not in st.session_state:
-    st.session_state.rag_chain = None
 
 
 st.set_page_config(page_title="AI Guard", page_icon="✨")
@@ -71,271 +44,91 @@ st.divider()
 
 load_dotenv()
 
-api_key = os.getenv("GUARDRAIL_API_KEY")
-policy_id = os.getenv("GUARDRAIL_POLICY_ID")
-
-
-##global variables initialized
-guard = AIGuardClient(
-    bearer_token=api_key,
-    policy_id=policy_id,
-)
-
-##DLP test tool allowing us to test DLP modules
-async def initiateMCP():
-    client = MultiServerMCPClient(
-        {
-            "dlptest": {
-                "transport": "http",  # HTTP-based remote server
-                # Ensure you start your weather server on port 8000
-                "url": "https://mcp.dlptest.com/api/mcp/",
-            }
-        }
-    )
-    tools = await client.get_tools()
-
-
-    return tools;
-
-
-
-@before_agent(can_jump_to=["end"])
-def InspectPrompt(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-
-    # Toggle: skip prompt inspection
-    if not st.session_state.get("inspect_prompt_enabled", True):
-        return None
-
-
-    returnValue = None
-
-
-    try:
-        if not state["messages"]:
-            return None
-
-        first_message = state["messages"][-1]
-        if first_message.type != 'human':
-            return None
-
-
-        print("Prompt inspected: ")
-        print(first_message.content)
-        guard.enforce(direction="IN", content=first_message.content)
-
-
-    except ValueError as e:
-       returnValue = {
-            "messages": [AIMessage(str(e))],
-            "jump_to": "end"
-        }
-       return returnValue
-
-
-    return returnValue
-
-@after_agent(can_jump_to=["end"])
-def InspectResponse(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-    """Model-based guardrail: Use an LLM to evaluate response safety."""
-    # Toggle: skip response inspection
-    if not st.session_state.get("inspect_response_enabled", True):
-        return None
-
-    # Get the final AI response
-    if not state["messages"]:
-        return None
-
-    last_message = state["messages"][-1]
-    if last_message.type != 'ai':
-        return None
-
-    ##skip the inspection of the response as the AI Message was generated during the inspection
-   ## if last_message.content.startswith("Blocked by Zscaler"):
-   ##     return None
-
-    try:
-        ##print("Response inspected: ")
-        ##print(last_message.content)
-        guard.enforce(direction="OUT", content=last_message.content)
-
-    except ValueError as e:
-        last_message.content = str(e)
-
-    return None
-
-if "mode" not in st.session_state:
-    st.session_state.mode = "DAS"
-
 
 @st.cache_resource
 def get_agent_anthropic():
     print("Creating agent")
-    ##model=gpt-4.1
-    systemprompt="You are a virtual assistant. Always invoke query_knowledge_base before answering questions. Great the user and say hello, I am ZAgent !! "
-    ##ChatAnthropic(base_url="https://proxy.zseclipse.com",default_headers={"X-ApiKey": ""})
-
-    vtools=  asyncio.run(initiateMCP())
-
-
-    # 1. Initialize the model
-    if st.session_state.provider == "Anthropic":
-        if st.session_state.mode == "Proxy":
-            api_key_proxy = os.getenv("GUARDRAIL_PROXY_API_KEY")
-            llmanthropic = ChatAnthropic(model=st.session_state.model,base_url="https://proxy.zseclipse.net",default_headers={"X-ApiKey":api_key_proxy})
-        else:
-            llmanthropic = ChatAnthropic(model=st.session_state.model)
-
-    if st.session_state.provider == "Ollama":
-        ##when using Ollama, reverse proxy is not available
-        llmanthropic=ChatOllama(model=st.session_state.model)
-
-    embeddings = OllamaEmbeddings(model="nomic-embed-text")
-    vector_store=InMemoryVectorStore(embeddings)
-    vector_tool = create_retriever_tool(
-        retriever=vector_store.as_retriever(search_kwargs={"k":4}),
-        name="query_knowledge_base",
-        description="Provides detailed information from documents uploaded by the user. "
-                    "Always check this tool before answering questions."
+    return build_agent(
+        provider=st.session_state.provider,
+        model=st.session_state.model,
+        mode=st.session_state.mode,
     )
-
-    ##append the vector search tool to the vtools
-    vtools.append(vector_tool)
-    if st.session_state.mode == "Proxy":
-        return create_agent(llmanthropic, system_prompt=systemprompt, tools=vtools, checkpointer=InMemorySaver()), vector_store
-
-    ##DAS mode -- middelware gets injected here
-    return create_agent(llmanthropic,system_prompt=systemprompt,tools=vtools, middleware=[InspectPrompt, InspectResponse],checkpointer=InMemorySaver()),vector_store
-
-
-@st.cache_resource
-def get_agent():
-    print("Creating agent")
-    ##model=gpt-4.1
-    systemprompt="You are a virtual assistant. Always invoke query_knowledge_base before answering questions."
-    ##ChatAnthropic(base_url="https://proxy.zseclipse.com",default_headers={"X-ApiKey": ""})
-
-    # 1. Initialize your local Ollama model
-
-    llmolama = ChatOllama(model="gemma4:e2b")
-    embeddings = OllamaEmbeddings(model="nomic-embed-text")
-    vector_store=InMemoryVectorStore(embeddings)
-    vector_tool = create_retriever_tool(
-        retriever=vector_store.as_retriever(search_kwargs={"k":4}),
-        name="query_knowledge_base",
-        description="Provides detailed information from documents uploaded by the user. "
-                    "Always check this tool before answering questions."
-    )
-    return create_agent(llmolama,system_prompt=systemprompt,tools=[vector_tool], middleware=[InspectPrompt, InspectResponse],checkpointer=InMemorySaver()),vector_store
-
-
-
-
-
-
 
 
 def generate_response(input_text: str):
-        answer_box = st.empty()
-        print(input_text)
+    answer_box = st.empty()
+    try:
+        response = asyncio.run(
+            agent_core.chat(
+                st.session_state.agent,
+                input_text,
+                thread_id="1",
+                inspect_prompt=st.session_state.inspect_prompt_enabled,
+                inspect_response=st.session_state.inspect_response_enabled,
+            )
+        )
+    except Exception as e:
+        answer_box.markdown(str(e))
+        st.session_state["messages"].append({"role": "assistant", "content": str(e)})
+        return
 
-        try:
-            result =  asyncio.run(st.session_state.agent.ainvoke({"messages": [{"role": "user", "content": input_text}]},{"configurable": {"thread_id": "1"}}))
-
-        except Exception as e:
-            answer_box.markdown(str(e))
-            st.session_state["messages"].append({"role": "assistant", "content": str(e)})
-            return
-
-        ##print(result)
-
-        last_message = result["messages"][-1]
-        ##if fable 5 is used, only extract text and not the signature
-        try:
-
-            text=last_message.content[-1]
-
-        except IndexError as e :
-
-            answer_box.markdown(last_message.content)
-            # Store into history exactly once
-            st.session_state["messages"].append({"role": "assistant", "content": last_message.content})
-            return
+    answer_box.markdown(response)
+    st.session_state["messages"].append({"role": "assistant", "content": response})
 
 
-        if "text" in text:
-            answer_box.markdown(text["text"])
-            st.session_state["messages"].append({"role": "assistant", "content": text["text"]})
-        else:
-            answer_box.markdown(last_message.content)
-            # Store into history exactly once
-            st.session_state["messages"].append({"role": "assistant", "content": last_message.content})
-
-
-
-
-
-
-with ((st.sidebar)):
+with st.sidebar:
     st.header("AI Guard Inspection")
 
-    newmode=st.radio("Inspection mode:",["DAS","Proxy"],key="rdio")
+    newmode = st.radio("Inspection mode:", ["DAS", "Proxy"], key="rdio")
 
-    if(newmode != st.session_state.mode):
+    if newmode != st.session_state.mode:
         st.session_state.mode = newmode
         get_agent_anthropic.clear()
-        st.session_state.agent,st.session_state.vector_store=get_agent_anthropic()
+        st.session_state.agent, st.session_state.vectorstore = get_agent_anthropic()
 
     if st.session_state.mode == "DAS":
         st.session_state.inspect_prompt_enabled = st.toggle(
             "Inspect Prompt (IN)",
-            value=st.session_state.inspect_prompt_enabled
+            value=st.session_state.inspect_prompt_enabled,
         )
         st.session_state.inspect_response_enabled = st.toggle(
             "Inspect Response (OUT)",
-            value=st.session_state.inspect_response_enabled
+            value=st.session_state.inspect_response_enabled,
         )
 
     with st.sidebar:
         st.header("Model")
         optionProvider = st.selectbox(
             "Provider",
-            ("Anthropic","Zllama","Ollama", "OpenAI"),
+            ("Anthropic", "Zllama", "Ollama", "OpenAI"),
         )
         if optionProvider == "Anthropic":
             optionModel = st.selectbox(
                 "Model",
-                ("claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-4-8","claude-fable-5"),
+                ("claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-4-8", "claude-fable-5"),
             )
         if optionProvider == "Ollama":
             optionModel = st.selectbox(
                 "Model",
                 ("gemma4:e2b"),
             )
-      ##  if optionProvider == "Zllama":
-      ##      optionModel = st.selectbox(
-      ##          "Model",
-      ##          ("gemma4:e2b"),
-      ##      )
 
-        if(optionProvider != st.session_state.provider or optionModel != st.session_state.model):
-            ##model or provider changed, we have to update the agent
+        if optionProvider != st.session_state.provider or optionModel != st.session_state.model:
             st.session_state.model = optionModel
             st.session_state.provider = optionProvider
             get_agent_anthropic.clear()
-            st.session_state.agent, st.session_state.vector_store = get_agent_anthropic()
+            st.session_state.agent, st.session_state.vectorstore = get_agent_anthropic()
 
     with st.sidebar:
         st.header("Document Ingestion - RAG Database")
         uploaded_file = st.file_uploader("Upload a text file (.txt)", type=["txt"])
         if uploaded_file is not None:
             if st.button("Process & Build Knowledge Base", type="primary"):
-                with st.spinner("Parsing file and building vector vector index..."):
+                with st.spinner("Parsing file and building vector index..."):
                     try:
                         text_content = uploaded_file.read().decode("utf-8")
-                        # --- Chunk and Tokenize Text ---
                         text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
                         chunks = text_splitter.split_text(text_content)
-                        # Convert chunks into LangChain Document objects
                         documents = [
                             Document(page_content=chunk, metadata={"source": uploaded_file.name})
                             for chunk in chunks
@@ -343,16 +136,12 @@ with ((st.sidebar)):
                         if documents:
                             st.session_state.vectorstore.add_documents(documents)
                             print("Successfully indexed the document")
-
                     except Exception as e:
                         st.error(f"Processing error {e}")
 
 
-
-
-
-##initialize agent and vector store
-st.session_state.agent,st.session_state.vectorstore = get_agent_anthropic()
+# Initialize agent and vector store
+st.session_state.agent, st.session_state.vectorstore = get_agent_anthropic()
 
 # Display chat messages from history on app rerun
 for message in st.session_state.messages:
@@ -361,19 +150,10 @@ for message in st.session_state.messages:
 
 # React to user input
 if prompt := st.chat_input("What is up?"):
-    # Display user message in chat message container
-   ## st.chat_message("user").markdown(prompt)
-    # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("user"):
-      st.markdown(prompt)
-      ##generate_response(prompt)
+        st.markdown(prompt)
 
-    # Display assistant response in chat message container
     with st.chat_message("assistant"):
         generate_response(prompt)
-        ##st.markdown(st.session_state.messages[-1]["content"])
-
-
-

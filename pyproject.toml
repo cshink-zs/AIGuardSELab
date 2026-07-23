@@ -15,4 +15,6 @@ dependencies = [
     "langchain-openai==1.1.10",
     "langgraph==1.0.9",
     "streamlit==1.54.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
 ]
