@@ -213,11 +213,19 @@ with st.sidebar:
                 "Model",
                 ("claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-4-8", "claude-fable-5"),
             )
-        if optionProvider == "Ollama":
+        elif optionProvider == "OpenAI":
             optionModel = st.selectbox(
                 "Model",
-                ("gemma4:e2b"),
+                ("gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4-turbo"),
             )
+        elif optionProvider == "Ollama":
+            optionModel = st.selectbox(
+                "Model",
+                ("gemma4:e2b",),
+            )
+        else:
+            st.warning(f"Provider '{optionProvider}' is not supported yet.")
+            optionModel = st.session_state.model
 
         if optionProvider != st.session_state.provider or optionModel != st.session_state.model:
             st.session_state.provider = optionProvider

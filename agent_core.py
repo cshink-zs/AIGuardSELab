@@ -14,6 +14,7 @@ from langchain_core.tools import create_retriever_tool
 from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.runtime import Runtime
 
@@ -172,6 +173,15 @@ async def build_agent(provider: str, model: str, mode: str, mcp_config: dict[str
             )
         else:
             llm = ChatAnthropic(model=model)
+    elif provider == "OpenAI":
+        if mode == "Proxy" and os.getenv("GUARDRAIL_PROXY_API_KEY"):
+            llm = ChatOpenAI(
+                model=model,
+                base_url="https://proxy.zseclipse.net",
+                default_headers={"X-ApiKey": os.getenv("GUARDRAIL_PROXY_API_KEY")},
+            )
+        else:
+            llm = ChatOpenAI(model=model)
     elif provider == "Ollama":
         llm = ChatOllama(model=model)
     else:
