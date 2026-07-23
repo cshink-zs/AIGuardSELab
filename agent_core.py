@@ -172,7 +172,13 @@ async def build_agent(provider: str, model: str, mode: str, mcp_config: dict[str
                 default_headers={"X-ApiKey": os.getenv("GUARDRAIL_PROXY_API_KEY")},
             )
         else:
-            llm = ChatAnthropic(model=model)
+            # Optional ANTHROPIC_BASE_URL overrides the default Anthropic
+            # endpoint (e.g. a gateway). Ignored in Proxy mode.
+            anthropic_base_url = os.getenv("ANTHROPIC_BASE_URL")
+            if anthropic_base_url:
+                llm = ChatAnthropic(model=model, base_url=anthropic_base_url)
+            else:
+                llm = ChatAnthropic(model=model)
     elif provider == "OpenAI":
         if mode == "Proxy" and os.getenv("GUARDRAIL_PROXY_API_KEY"):
             llm = ChatOpenAI(

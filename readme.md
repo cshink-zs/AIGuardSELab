@@ -48,6 +48,9 @@ The app loads configuration from a `.env` file in the project root (via `python-
 # ── LLM provider ─────────────────────────────────────────────
 # Required when using Anthropic as the provider (the default).
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx
+# Optional — override the default Anthropic endpoint (e.g. a gateway).
+# Only used when Proxy mode is NOT active.
+# ANTHROPIC_BASE_URL=https://your-anthropic-compatible-endpoint
 
 # Required when using the OpenAI provider.
 # OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
@@ -76,6 +79,7 @@ GUARDRAIL_PROXY_API_KEY=your-proxy-api-key
 | Variable | Required? | Used for |
 |----------|-----------|----------|
 | `ANTHROPIC_API_KEY` | Yes (for Anthropic provider) | Authenticates calls to Claude models |
+| `ANTHROPIC_BASE_URL` | Optional | Overrides the default Anthropic endpoint for the Anthropic provider; ignored in Proxy mode |
 | `GUARDRAIL_DAS_API_KEY` | For DAS mode | Bearer token for the AI Guard policy engine |
 | `GUARDRAIL_DAS_POLICY_ID` | For DAS mode | Which AI Guard policy to enforce |
 | `GUARDRAIL_PROXY_API_KEY` | For Proxy mode | `X-ApiKey` header sent to the Zscaler proxy |
