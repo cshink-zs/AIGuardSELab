@@ -1,6 +1,9 @@
 # AI Guard Demo Agent
 
-A demo project showing how [Zscaler AI Guard](https://api.zseclipse.net) can be integrated into a LangChain / LangGraph agent pipeline. AI Guard inspects prompts (IN) and responses (OUT) and can **allow**, **mask**, or **block** traffic before it reaches — or leaves — the LLM.
+A demo project showing how Zscaler AI Guard an be integrated into a LangChain / LangGraph agent pipeline. AI Guard inspects prompts (IN) and responses (OUT) and can **allow**, **mask**, or **block** traffic before it reaches — or leaves — the LLM.
+
+It allows to demo the integration of an AI Agent with AI Guard where AI Guard can be used to inspect and protect prompts/responses. It also showcases the integration with external MCP servers. A default MCP server is configured and points to dlptest.com for DLP testing.
+
 
 It ships two entry points that share the same agent core:
 
@@ -46,9 +49,6 @@ The app loads configuration from a `.env` file in the project root (via `python-
 # Required when using Anthropic as the provider (the default).
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx
 
-# Optional — only if you enable the OpenAI provider.
-# OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
-
 # ── AI Guard: DAS mode (Detection as a Service) ──────────────
 # Both are required for "DAS" mode to appear and work.
 GUARDRAIL_DAS_API_KEY=your-das-bearer-token
@@ -89,9 +89,9 @@ Install dependencies (creates a `.venv` from `uv.lock`):
 uv sync
 ```
 
-Make sure Ollama is running (`ollama serve`) and `nomic-embed-text` is pulled.
+Make sure Ollama is running (`ollama serve`) and `nomic-embed-text` is pulled. Otherwise, you won't be able to use the RAG database. RAG only supports .txt files at this time for testing.
 
-### Streamlit UI
+### Streamlit UI - To run the UI
 
 ```bash
 uv run streamlit run app.py
@@ -99,7 +99,7 @@ uv run streamlit run app.py
 
 Then open http://localhost:8501.
 
-### FastAPI REST API
+### FastAPI REST API - To run in API mode (useful to test against AI Red Teaming)
 
 ```bash
 uv run uvicorn api:app --reload --port 8000
