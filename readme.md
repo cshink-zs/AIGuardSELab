@@ -2,7 +2,7 @@
 
 A demo project showing how Zscaler AI Guard an be integrated into a LangChain / LangGraph agent pipeline. AI Guard inspects prompts (IN) and responses (OUT) and can **allow**, **mask**, or **block** traffic before it reaches — or leaves — the LLM.
 
-It allows to demo the integration of an AI Agent with AI Guard where AI Guard can be used to inspect and protect prompts/responses. It also showcases the integration with external MCP servers. A default MCP server is configured and points to dlptest.com for DLP testing.
+It allows to demo the integration of an AI Agent with AI Guard where AI Guard can be used to inspect and protect prompts/responses. It also showcases the integration with external MCP servers. A default MCP server is configured and points to dlptest.com for DLP testing. Note: to get your own Anthropic key , please visit : https://platform.claude.com/
 
 
 It ships two entry points that share the same agent core:
@@ -49,6 +49,12 @@ The app loads configuration from a `.env` file in the project root (via `python-
 # Required when using Anthropic as the provider (the default).
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx
 
+# Required when using the OpenAI provider.
+# OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
+# Optional — override the default OpenAI endpoint (e.g. an OpenAI-compatible
+# gateway). Only used when Proxy mode is NOT active.
+# OPENAI_BASE_URL=https://your-openai-compatible-endpoint/v1
+
 # ── AI Guard: DAS mode (Detection as a Service) ──────────────
 # Both are required for "DAS" mode to appear and work.
 GUARDRAIL_DAS_API_KEY=your-das-bearer-token
@@ -62,7 +68,7 @@ GUARDRAIL_PROXY_API_KEY=your-proxy-api-key
 # LANGSMITH_TRACING=true
 # LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 # LANGSMITH_API_KEY=lsv2_xxxxxxxxxxxxxxxxxxxxxxxx
-# LANGSMITH_PROJECT=ai-guard-demo
+# LANGSMITH_PROJECT=xxxxx
 ```
 
 ### Variable reference
@@ -74,6 +80,7 @@ GUARDRAIL_PROXY_API_KEY=your-proxy-api-key
 | `GUARDRAIL_DAS_POLICY_ID` | For DAS mode | Which AI Guard policy to enforce |
 | `GUARDRAIL_PROXY_API_KEY` | For Proxy mode | `X-ApiKey` header sent to the Zscaler proxy |
 | `OPENAI_API_KEY` | Optional | Only if using the OpenAI provider |
+| `OPENAI_BASE_URL` | Optional | Overrides the default OpenAI endpoint for the OpenAI provider; ignored in Proxy mode |
 | `LANGSMITH_TRACING` / `LANGSMITH_ENDPOINT` / `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` | Optional | LangSmith run tracing/observability |
 | `OLLAMA_HOST` | Optional | Overrides the Ollama base URL (set automatically in Docker to reach the host) |
 

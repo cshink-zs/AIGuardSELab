@@ -181,7 +181,13 @@ async def build_agent(provider: str, model: str, mode: str, mcp_config: dict[str
                 default_headers={"X-ApiKey": os.getenv("GUARDRAIL_PROXY_API_KEY")},
             )
         else:
-            llm = ChatOpenAI(model=model)
+            # Optional OPENAI_BASE_URL overrides the default OpenAI endpoint
+            # (e.g. an Azure/OpenAI-compatible gateway). Ignored in Proxy mode.
+            openai_base_url = os.getenv("OPENAI_BASE_URL")
+            if openai_base_url:
+                llm = ChatOpenAI(model=model, base_url=openai_base_url)
+            else:
+                llm = ChatOpenAI(model=model)
     elif provider == "Ollama":
         llm = ChatOllama(model=model)
     else:
