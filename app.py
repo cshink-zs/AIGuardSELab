@@ -4,14 +4,17 @@
 ##  user prompt --> AI Guard (allow, block, etc)  --> LLM -> AI Guard (allow, block, etc) -->
 ## Middleware is used to insert AI Guard beforeAgent and after Agent
 import asyncio
+import json
+import os
+import uuid
 
 import streamlit as st
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv, set_key
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import agent_core
-from agent_core import build_agent
+from agent_core import DEFAULT_MCP_CONFIG, build_agent
 
 # --- Session state defaults ---
 if "inspect_prompt_enabled" not in st.session_state:
@@ -27,15 +30,35 @@ if "model" not in st.session_state:
     st.session_state.model = "claude-haiku-4-5-20251001"
 
 if "mode" not in st.session_state:
-    st.session_state.mode = "DAS"
+    _available = agent_core.available_modes()
+    st.session_state.mode = _available[0] if _available else "off"
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = str(uuid.uuid4())
+
+if "mcp_tools_config" not in st.session_state:
+    st.session_state.mcp_tools_config = dict(DEFAULT_MCP_CONFIG)
 
 if "agent" not in st.session_state:
     st.session_state.agent = None
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
+
+# One persistent event loop per session. asyncio.run() closes the loop after each
+# call, which invalidates the httpx.AsyncClient held inside ChatAnthropic and the
+# MCP client connections. Reusing the same loop keeps those resources alive across
+# multiple chat turns.
+if "event_loop" not in st.session_state:
+    _loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_loop)
+    st.session_state.event_loop = _loop
+
+
+def run_async(coro):
+    return st.session_state.event_loop.run_until_complete(coro)
 
 
 st.set_page_config(page_title="AI Guard", page_icon="✨")
@@ -45,56 +68,134 @@ st.divider()
 load_dotenv()
 
 
-@st.cache_resource
-def get_agent_anthropic():
-    print("Creating agent")
-    return build_agent(
-        provider=st.session_state.provider,
-        model=st.session_state.model,
-        mode=st.session_state.mode,
+def reset_agent():
+    """Recreate the agent for the current provider/model/mode and start a fresh conversation."""
+    st.session_state.agent, st.session_state.vectorstore = run_async(
+        build_agent(
+            provider=st.session_state.provider,
+            model=st.session_state.model,
+            mode=st.session_state.mode,
+            mcp_config=st.session_state.mcp_tools_config,
+        )
     )
+    st.session_state.messages = []
+    st.session_state.thread_id = str(uuid.uuid4())
+
+
+def _render_tool_calls(tool_calls: list[dict]):
+    for tc in tool_calls:
+        st.markdown(f"**`{tc['name']}`**")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.caption("Input")
+            st.json(tc["input"])
+        with col2:
+            st.caption("Output")
+            output = tc["output"]
+            if output is None:
+                st.caption("—")
+            elif isinstance(output, str):
+                st.text(output[:2000])
+            else:
+                st.json(output)
+        st.divider()
 
 
 def generate_response(input_text: str):
     answer_box = st.empty()
     try:
-        response = asyncio.run(
+        response, tool_trace = run_async(
             agent_core.chat(
                 st.session_state.agent,
                 input_text,
-                thread_id="1",
+                thread_id=st.session_state.thread_id,
                 inspect_prompt=st.session_state.inspect_prompt_enabled,
                 inspect_response=st.session_state.inspect_response_enabled,
             )
         )
     except Exception as e:
         answer_box.markdown(str(e))
-        st.session_state["messages"].append({"role": "assistant", "content": str(e)})
+        st.session_state["messages"].append({"role": "assistant", "content": str(e), "tool_calls": []})
         return
 
     answer_box.markdown(response)
-    st.session_state["messages"].append({"role": "assistant", "content": response})
+    if tool_trace:
+        with st.expander(f"🔧 Tool calls ({len(tool_trace)})"):
+            _render_tool_calls(tool_trace)
+    st.session_state["messages"].append({"role": "assistant", "content": response, "tool_calls": tool_trace})
 
 
 with st.sidebar:
     st.header("AI Guard Inspection")
 
-    newmode = st.radio("Inspection mode:", ["DAS", "Proxy"], key="rdio")
+    modes = agent_core.available_modes()
 
-    if newmode != st.session_state.mode:
-        st.session_state.mode = newmode
-        get_agent_anthropic.clear()
-        st.session_state.agent, st.session_state.vectorstore = get_agent_anthropic()
+    if not modes:
+        st.caption("No inspection modes available — configure GUARDRAIL keys below.")
+        if st.session_state.mode != "off":
+            st.session_state.mode = "off"
+            reset_agent()
+    else:
+        # If the current mode was removed (e.g. key deleted), fall back gracefully
+        if st.session_state.mode not in modes:
+            st.session_state.mode = modes[0]
+            reset_agent()
 
-    if st.session_state.mode == "DAS":
-        st.session_state.inspect_prompt_enabled = st.toggle(
-            "Inspect Prompt (IN)",
-            value=st.session_state.inspect_prompt_enabled,
+        newmode = st.radio(
+            "Inspection mode:", modes,
+            index=modes.index(st.session_state.mode),
         )
-        st.session_state.inspect_response_enabled = st.toggle(
-            "Inspect Response (OUT)",
-            value=st.session_state.inspect_response_enabled,
-        )
+        if newmode != st.session_state.mode:
+            st.session_state.mode = newmode
+            reset_agent()
+
+        if st.session_state.mode == "DAS":
+            st.session_state.inspect_prompt_enabled = st.toggle(
+                "Inspect Prompt (IN)",
+                value=st.session_state.inspect_prompt_enabled,
+            )
+            st.session_state.inspect_response_enabled = st.toggle(
+                "Inspect Response (OUT)",
+                value=st.session_state.inspect_response_enabled,
+            )
+
+    with st.sidebar:
+        st.header("AI Guard Configuration")
+
+        guardrail_vars = {k: v for k, v in os.environ.items() if k.startswith("GUARDRAIL_")}
+
+        if not guardrail_vars:
+            st.caption("No GUARDRAIL_* variables found in environment.")
+        else:
+            with st.form("guardrail_config"):
+                new_values = {}
+                for var_name in sorted(guardrail_vars):
+                    label = var_name.removeprefix("GUARDRAIL_").replace("_", " ").title()
+                    is_secret = any(var_name.endswith(s) for s in ("_KEY", "_TOKEN", "_SECRET"))
+                    new_values[var_name] = st.text_input(
+                        label,
+                        value=guardrail_vars[var_name],
+                        type="password" if is_secret else "default",
+                    )
+
+                if st.form_submit_button("💾 Save & Apply"):
+                    dotenv_path = find_dotenv(usecwd=True)
+                    changed = any(
+                        new_val != os.environ.get(var_name, "")
+                        for var_name, new_val in new_values.items()
+                    )
+                    if changed:
+                        for var_name, new_val in new_values.items():
+                            os.environ[var_name] = new_val
+                            if dotenv_path:
+                                set_key(dotenv_path, var_name, new_val)
+                        agent_core.reconfigure_guard()
+                        if dotenv_path:
+                            st.success("Saved to .env and applied.")
+                        else:
+                            st.warning("Applied for this session — no .env file found, changes won't survive a restart.")
+                    else:
+                        st.info("No changes detected.")
 
     with st.sidebar:
         st.header("Model")
@@ -114,10 +215,58 @@ with st.sidebar:
             )
 
         if optionProvider != st.session_state.provider or optionModel != st.session_state.model:
-            st.session_state.model = optionModel
             st.session_state.provider = optionProvider
-            get_agent_anthropic.clear()
-            st.session_state.agent, st.session_state.vectorstore = get_agent_anthropic()
+            st.session_state.model = optionModel
+            reset_agent()
+
+    with st.sidebar:
+        st.header("MCP Tools")
+
+        if not st.session_state.mcp_tools_config:
+            st.caption("No MCP tools configured.")
+
+        for tool_name, tool_settings in list(st.session_state.mcp_tools_config.items()):
+            with st.expander(f"🔧 {tool_name}"):
+                st.text_input("URL", value=tool_settings["url"],
+                              key=f"disp_url_{tool_name}", disabled=True)
+                headers = tool_settings.get("headers") or {}
+                st.text_area("Headers (JSON)", height=80,
+                             value=json.dumps(headers, indent=2) if headers else "",
+                             key=f"disp_hdr_{tool_name}", disabled=True,
+                             help="HTTP headers sent with every request to this tool")
+                if st.button("Remove", key=f"remove_mcp_{tool_name}", type="secondary"):
+                    del st.session_state.mcp_tools_config[tool_name]
+                    reset_agent()
+                    st.rerun()
+
+        # Add new tool form
+        with st.form("add_mcp_tool", clear_on_submit=True):
+            st.markdown("**Add Tool**")
+            new_name = st.text_input("Name", placeholder="e.g. weather")
+            new_url = st.text_input("URL", placeholder="https://...")
+            new_headers_raw = st.text_area(
+                "Headers (JSON, optional)", height=80,
+                placeholder='{"Authorization": "Bearer <token>"}',
+                help="Optional HTTP headers to include with every request to this tool",
+            )
+            if st.form_submit_button("Add"):
+                if new_name and new_url:
+                    headers = {}
+                    if new_headers_raw.strip():
+                        try:
+                            headers = json.loads(new_headers_raw)
+                            if not isinstance(headers, dict):
+                                st.error("Headers must be a JSON object, e.g. {\"key\": \"value\"}")
+                                st.stop()
+                        except json.JSONDecodeError:
+                            st.error("Invalid JSON — headers must be a JSON object")
+                            st.stop()
+                    st.session_state.mcp_tools_config[new_name] = {
+                        "url": new_url,
+                        "headers": headers,
+                    }
+                    reset_agent()
+                    st.rerun()
 
     with st.sidebar:
         st.header("Document Ingestion - RAG Database")
@@ -140,13 +289,24 @@ with st.sidebar:
                         st.error(f"Processing error {e}")
 
 
-# Initialize agent and vector store
-st.session_state.agent, st.session_state.vectorstore = get_agent_anthropic()
+# Initialize agent on first load
+if st.session_state.agent is None:
+    st.session_state.agent, st.session_state.vectorstore = run_async(
+        build_agent(
+            provider=st.session_state.provider,
+            model=st.session_state.model,
+            mode=st.session_state.mode,
+            mcp_config=st.session_state.mcp_tools_config,
+        )
+    )
 
 # Display chat messages from history on app rerun
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if message.get("tool_calls"):
+            with st.expander(f"🔧 Tool calls ({len(message['tool_calls'])})"):
+                _render_tool_calls(message["tool_calls"])
 
 # React to user input
 if prompt := st.chat_input("What is up?"):

@@ -1,0 +1,36 @@
+services:
+
+  # Ollama runs on the host — start it separately with: ollama serve
+  # ollama:
+  #   build:
+  #     context: ./ollama
+  #     dockerfile: dockerfile
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_models:/root/.ollama
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 20
+  #     start_period: 120s
+  #   restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"   # Streamlit UI
+      - "8000:8000"   # FastAPI REST
+    env_file:
+      - .env
+    environment:
+      # host.docker.internal resolves to the host machine on macOS/Windows (Docker Desktop)
+      # On Linux: add --add-host=host.docker.internal:host-gateway to the run command
+      OLLAMA_HOST: http://host.docker.internal:11434
+    restart: unless-stopped
+
+# volumes:
+#   ollama_models:

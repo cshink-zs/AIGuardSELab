@@ -29,9 +29,34 @@ class GuardResult:
 class AIGuardClient:
     def __init__(self, bearer_token: str, policy_id: str, timeout_s: int = 15):
         self.url = "https://api.zseclipse.net/v1/detection/execute-policy"
+        self.resolve_url="https://api.zseclipse.net/v1/detection/resolve-and-execute-policy"
         self.bearer_token = bearer_token
         self.policy_id = str(policy_id)
         self.timeout_s = timeout_s
+
+    def resolve_and_evaluate(self, *, direction: str, content: str) -> GuardResult:
+        headers = {
+            "Authorization": f"Bearer {self.bearer_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "direction": direction,  # "IN" or "OUT"
+            "content": content,
+        }
+
+        r = requests.post(self.resolve_url, json=payload, headers=headers, timeout=self.timeout_s,verify=False)
+        r.raise_for_status()
+        data = r.json()
+
+        return GuardResult(
+            transaction_id=data.get("transactionId", ""),
+            action=data.get("action", "ALLOW"),
+            severity=data.get("severity"),
+            direction=data.get("direction"),
+            masked_content=data.get("maskedContent"),
+            detector_responses=data.get("detectorResponses") or {},
+            raw=data,
+        )
 
     def evaluate(self, *, direction: str, content: str) -> GuardResult:
         headers = {
@@ -71,10 +96,3 @@ class AIGuardClient:
         return safe_content, res
 
 
-#class AIGuardMiddleware(AgentMiddleware):
-
- #   def before_model(self, state: StateT, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
- #       return None
-
-  #  def after_model(self, state: StateT, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-   #     return None

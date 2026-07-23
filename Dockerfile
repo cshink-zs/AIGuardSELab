@@ -1,39 +1,32 @@
-FROM python:3.14.2
+FROM python:3.14-slim
 
-# Install dependencies needed for Ollama
-RUN apt-get update && apt-get install -y \
+# Prevent .pyc files and enable unbuffered stdout/stderr for Docker logs
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Ollama
-# Download and extract Ollama binary (now a .tar.zst archive)
-# Download first, decompress with zstd, then extract with tar
-ARG TARGETARCH
-RUN curl -fsSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${TARGETARCH}.tar.zst \
-    -o /tmp/ollama.tar.zst && \
-    zstd -d /tmp/ollama.tar.zst -o /tmp/ollama.tar && \
-    tar -xf /tmp/ollama.tar -C /usr && \
-    rm /tmp/ollama.tar.zst /tmp/ollama.tar
+# Install uv — used for dependency installation
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-
-# Set working directory
 WORKDIR /app
 
-# Install Python dependencies first (layer caching)
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Install dependencies before copying source so this layer is cached
+# unless pyproject.toml or uv.lock change
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-cache
 
-# Copy Python files
-COPY app.py .
-COPY aiguard_utils.py .
+# Application source
+COPY .env ./
+COPY app.py api.py agent_core.py aiguard_utils.py ./
+COPY .streamlit/ ./.streamlit/
 
-# Copy Streamlit config
-COPY ./.streamlit/config.toml ./.streamlit/config.toml
+# Streamlit UI | FastAPI REST
+EXPOSE 8501 8000
 
-EXPOSE 8501
-
-# Copy entrypoint
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

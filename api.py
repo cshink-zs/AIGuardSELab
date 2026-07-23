@@ -15,10 +15,10 @@ app = FastAPI(title="AI Guard Chat API", version="1.0.0")
 _agent_cache: dict = {}
 
 
-def _get_agent(provider: str, model: str, mode: str):
+async def _get_agent(provider: str, model: str, mode: str):
     key = f"{provider}:{model}:{mode}"
     if key not in _agent_cache:
-        _agent_cache[key] = build_agent(provider, model, mode)
+        _agent_cache[key] = await build_agent(provider, model, mode)
     return _agent_cache[key]
 
 
@@ -41,8 +41,8 @@ class ChatResponse(BaseModel):
 async def chat_endpoint(req: ChatRequest):
     thread_id = req.thread_id or str(uuid.uuid4())
     try:
-        agent, _ = _get_agent(req.provider, req.model, req.mode)
-        response = await agent_chat(
+        agent, _ = await _get_agent(req.provider, req.model, req.mode)
+        response, _ = await agent_chat(
             agent,
             req.message,
             thread_id,

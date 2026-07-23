@@ -1,19 +1,11 @@
 #!/bin/bash
 set -e
 
-# Start Ollama in the background
-ollama serve &
+echo "Starting FastAPI server on port 8000..."
+uv run uvicorn api:app --host 0.0.0.0 --port 8000 &
 
-# Wait until Ollama is ready
-echo "Waiting for Ollama..."
-until curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; do
-  sleep 1
-done
-
-# Pull models if not already present
-ollama pull nomic-embed-text
-ollama pull gemma4:e2b
-
-echo "Models ready. Running Python script..."
-
-streamlit run app.py
+echo "Starting Streamlit on port 8501..."
+exec uv run streamlit run app.py \
+    --server.port 8501 \
+    --server.address 0.0.0.0 \
+    --server.headless true
