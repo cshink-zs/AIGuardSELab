@@ -47,6 +47,11 @@ if "agent" not in st.session_state:
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
 
+# RAG (document ingestion) depends on Ollama for embeddings. Probe once per
+# session so the RAG UI is only shown when Ollama is actually reachable.
+if "ollama_available" not in st.session_state:
+    st.session_state.ollama_available = agent_core.ollama_available()
+
 # One persistent event loop per session. asyncio.run() closes the loop after each
 # call, which invalidates the httpx.AsyncClient held inside ChatAnthropic and the
 # MCP client connections. Reusing the same loop keeps those resources alive across
@@ -268,25 +273,28 @@ with st.sidebar:
                     reset_agent()
                     st.rerun()
 
-    with st.sidebar:
-        st.header("Document Ingestion - RAG Database")
-        uploaded_file = st.file_uploader("Upload a text file (.txt)", type=["txt"])
-        if uploaded_file is not None:
-            if st.button("Process & Build Knowledge Base", type="primary"):
-                with st.spinner("Parsing file and building vector index..."):
-                    try:
-                        text_content = uploaded_file.read().decode("utf-8")
-                        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-                        chunks = text_splitter.split_text(text_content)
-                        documents = [
-                            Document(page_content=chunk, metadata={"source": uploaded_file.name})
-                            for chunk in chunks
-                        ]
-                        if documents:
-                            st.session_state.vectorstore.add_documents(documents)
-                            print("Successfully indexed the document")
-                    except Exception as e:
-                        st.error(f"Processing error {e}")
+    # RAG document ingestion needs Ollama (nomic-embed-text) for embeddings.
+    # Only show this section when Ollama is reachable.
+    if st.session_state.ollama_available:
+        with st.sidebar:
+            st.header("Document Ingestion - RAG Database")
+            uploaded_file = st.file_uploader("Upload a text file (.txt)", type=["txt"])
+            if uploaded_file is not None:
+                if st.button("Process & Build Knowledge Base", type="primary"):
+                    with st.spinner("Parsing file and building vector index..."):
+                        try:
+                            text_content = uploaded_file.read().decode("utf-8")
+                            text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+                            chunks = text_splitter.split_text(text_content)
+                            documents = [
+                                Document(page_content=chunk, metadata={"source": uploaded_file.name})
+                                for chunk in chunks
+                            ]
+                            if documents:
+                                st.session_state.vectorstore.add_documents(documents)
+                                print("Successfully indexed the document")
+                        except Exception as e:
+                            st.error(f"Processing error {e}")
 
 
 # Initialize agent on first load

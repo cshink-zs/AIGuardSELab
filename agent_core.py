@@ -3,6 +3,7 @@ import contextvars
 import os
 from typing import Any
 
+import requests
 from aiguard_utils import AIGuardClient
 from dotenv import load_dotenv
 from langchain.agents import create_agent
@@ -36,6 +37,21 @@ def reconfigure_guard() -> None:
     """Recreate the guard client from the current environment variables."""
     global guard
     guard = _make_guard()
+
+
+def ollama_available() -> bool:
+    """Return True if a local Ollama server is reachable.
+
+    RAG embeddings (and the optional Ollama LLM provider) depend on Ollama.
+    We probe the /api/tags endpoint with a short timeout so the app degrades
+    gracefully when Ollama isn't running.
+    """
+    base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    try:
+        resp = requests.get(f"{base_url}/api/tags", timeout=2)
+        return resp.status_code == 200
+    except requests.RequestException:
+        return False
 
 
 def available_modes() -> list[str]:
@@ -110,25 +126,42 @@ async def _init_mcp_tools(mcp_config: dict[str, dict] | None = None) -> list:
 
 
 async def build_agent(provider: str, model: str, mode: str, mcp_config: dict[str, str] | None = None):
-    """Create an agent and vector store for the given provider/model/mode."""
-    embeddings = OllamaEmbeddings(model="nomic-embed-text")
-    vector_store = InMemoryVectorStore(embeddings)
-    vector_tool = create_retriever_tool(
-        retriever=vector_store.as_retriever(search_kwargs={"k": 4}),
-        name="query_knowledge_base",
-        description=(
-            "Provides detailed information from documents uploaded by the user. "
-            "Always check this tool before answering questions."
-        ),
-    )
+    """Create an agent and vector store for the given provider/model/mode.
+
+    RAG requires Ollama (for the nomic-embed-text embeddings). When Ollama is
+    unavailable, the agent is built without the knowledge-base tool and the
+    returned vector store is None.
+    """
+    rag_enabled = ollama_available()
+
+    vector_store = None
+    rag_tools: list = []
+    if rag_enabled:
+        embeddings = OllamaEmbeddings(model="nomic-embed-text")
+        vector_store = InMemoryVectorStore(embeddings)
+        vector_tool = create_retriever_tool(
+            retriever=vector_store.as_retriever(search_kwargs={"k": 4}),
+            name="query_knowledge_base",
+            description=(
+                "Provides detailed information from documents uploaded by the user. "
+                "Always check this tool before answering questions."
+            ),
+        )
+        rag_tools = [vector_tool]
 
     mcp_tools = await _init_mcp_tools(mcp_config)
-    tools = mcp_tools + [vector_tool]
+    tools = mcp_tools + rag_tools
 
-    system_prompt = (
-        "You are a virtual assistant. Always invoke tool query_knowledge_base before answering questions. "
-        "Greet the user and say hello, I am an AI Guard demo agent!!"
-    )
+    if rag_enabled:
+        system_prompt = (
+            "You are a virtual assistant. Always invoke tool query_knowledge_base before answering questions. "
+            "Greet the user and say hello, I am an AI Guard demo agent!!"
+        )
+    else:
+        system_prompt = (
+            "You are a virtual assistant. "
+            "Greet the user and say hello, I am an AI Guard demo agent!!"
+        )
 
     if provider == "Anthropic":
         if mode == "Proxy" and os.getenv("GUARDRAIL_PROXY_API_KEY"):
