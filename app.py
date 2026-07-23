@@ -3,10 +3,11 @@
 # from the LLM.
 ##  user prompt --> AI Guard (allow, block, etc)  --> LLM -> AI Guard (allow, block, etc) -->
 ## Middleware is used to insert AI Guard beforeAgent and after Agent
-
+import json
 import threading, time
 import asyncio
 from langchain_anthropic import ChatAnthropic
+from langchain_classic.chains.openai_functions import create_tagging_chain
 from langchain_core.documents import Document
 from langchain_core.vectorstores import InMemoryVectorStore
 
@@ -39,11 +40,33 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
 
 
+# --- Inspection toggles (UI) ---
+if "inspect_prompt_enabled" not in st.session_state:
+    st.session_state.inspect_prompt_enabled = True
+
+if "inspect_response_enabled" not in st.session_state:
+    st.session_state.inspect_response_enabled = True
+
+if "provider" not in st.session_state:
+    st.session_state.provider = "Anthropic"
+
+if "model" not in st.session_state:
+    st.session_state.model = "claude-haiku-4-5-20251001"
+
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "agent" not in st.session_state:
+    st.session_state.agent = None
+if "vectorstore" not in st.session_state:
+    st.session_state.vectorstore = None
+if "rag_chain" not in st.session_state:
+    st.session_state.rag_chain = None
 
 
-
-st.set_page_config(page_title="AI Guard - Test assistant", page_icon="✨")
-st.header("AI Guard - Demo")
+st.set_page_config(page_title="AI Guard", page_icon="✨")
+st.header("AI Guard - Demo agent")
 st.divider()
 
 load_dotenv()
@@ -96,8 +119,6 @@ def InspectPrompt(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
             return None
 
 
-
-
         print("Prompt inspected: ")
         print(first_message.content)
         guard.enforce(direction="IN", content=first_message.content)
@@ -105,7 +126,7 @@ def InspectPrompt(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
 
     except ValueError as e:
        returnValue = {
-            "messages": [AIMessage("Traffic was blocked by Zscaler AI Guard")],
+            "messages": [AIMessage(str(e))],
             "jump_to": "end"
         }
        return returnValue
@@ -129,16 +150,16 @@ def InspectResponse(state: AgentState, runtime: Runtime) -> dict[str, Any] | Non
         return None
 
     ##skip the inspection of the response as the AI Message was generated during the inspection
-    if last_message.content.startswith("Traffic was blocked by Zscaler AI Guard"):
-        return None
+   ## if last_message.content.startswith("Blocked by Zscaler"):
+   ##     return None
 
     try:
-        print("Response inspected: ")
-        print(last_message.content)
+        ##print("Response inspected: ")
+        ##print(last_message.content)
         guard.enforce(direction="OUT", content=last_message.content)
 
     except ValueError as e:
-        last_message.content = "Response was blocked by Zscaler AI Guard"
+        last_message.content = str(e)
 
     return None
 
@@ -156,14 +177,17 @@ def get_agent_anthropic():
     vtools=  asyncio.run(initiateMCP())
 
 
+    # 1. Initialize the model
+    if st.session_state.provider == "Anthropic":
+        if st.session_state.mode == "Proxy":
+            api_key_proxy = os.getenv("GUARDRAIL_PROXY_API_KEY")
+            llmanthropic = ChatAnthropic(model=st.session_state.model,base_url="https://proxy.zseclipse.net",default_headers={"X-ApiKey":api_key_proxy})
+        else:
+            llmanthropic = ChatAnthropic(model=st.session_state.model)
 
-
-    # 1. Initialize your local Ollama model
-    if st.session_state.mode == "Proxy":
-        api_key_proxy = os.getenv("GUARDRAIL_PROXY_API_KEY")
-        llmanthropic = ChatAnthropic(model="claude-haiku-4-5-20251001",base_url="https://proxy.zseclipse.net",default_headers={"X-ApiKey":api_key_proxy})
-    else:
-        llmanthropic = ChatAnthropic(model="claude-haiku-4-5-20251001")
+    if st.session_state.provider == "Ollama":
+        ##when using Ollama, reverse proxy is not available
+        llmanthropic=ChatOllama(model=st.session_state.model)
 
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     vector_store=InMemoryVectorStore(embeddings)
@@ -179,7 +203,7 @@ def get_agent_anthropic():
     if st.session_state.mode == "Proxy":
         return create_agent(llmanthropic, system_prompt=systemprompt, tools=vtools, checkpointer=InMemorySaver()), vector_store
 
-
+    ##DAS mode -- middelware gets injected here
     return create_agent(llmanthropic,system_prompt=systemprompt,tools=vtools, middleware=[InspectPrompt, InspectResponse],checkpointer=InMemorySaver()),vector_store
 
 
@@ -213,23 +237,40 @@ def get_agent():
 def generate_response(input_text: str):
         answer_box = st.empty()
         print(input_text)
-        result =  asyncio.run(st.session_state.agent.ainvoke({"messages": [{"role": "user", "content": input_text}]},{"configurable": {"thread_id": "1"}}))
 
+        try:
+            result =  asyncio.run(st.session_state.agent.ainvoke({"messages": [{"role": "user", "content": input_text}]},{"configurable": {"thread_id": "1"}}))
+
+        except Exception as e:
+            answer_box.markdown(str(e))
+            st.session_state["messages"].append({"role": "assistant", "content": str(e)})
+            return
+
+        ##print(result)
 
         last_message = result["messages"][-1]
-        answer_box.markdown(last_message.content)
+        ##if fable 5 is used, only extract text and not the signature
+        try:
 
-        # Store into history exactly once
-        st.session_state["messages"].append({"role": "assistant", "content": last_message.content})
+            text=last_message.content[-1]
+
+        except IndexError as e :
+
+            answer_box.markdown(last_message.content)
+            # Store into history exactly once
+            st.session_state["messages"].append({"role": "assistant", "content": last_message.content})
+            return
 
 
+        if "text" in text:
+            answer_box.markdown(text["text"])
+            st.session_state["messages"].append({"role": "assistant", "content": text["text"]})
+        else:
+            answer_box.markdown(last_message.content)
+            # Store into history exactly once
+            st.session_state["messages"].append({"role": "assistant", "content": last_message.content})
 
-# --- Inspection toggles (UI) ---
-if "inspect_prompt_enabled" not in st.session_state:
-    st.session_state.inspect_prompt_enabled = True
 
-if "inspect_response_enabled" not in st.session_state:
-    st.session_state.inspect_response_enabled = True
 
 
 
@@ -254,7 +295,34 @@ with ((st.sidebar)):
             value=st.session_state.inspect_response_enabled
         )
 
+    with st.sidebar:
+        st.header("Model")
+        optionProvider = st.selectbox(
+            "Provider",
+            ("Anthropic","Zllama","Ollama", "OpenAI"),
+        )
+        if optionProvider == "Anthropic":
+            optionModel = st.selectbox(
+                "Model",
+                ("claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-4-8","claude-fable-5"),
+            )
+        if optionProvider == "Ollama":
+            optionModel = st.selectbox(
+                "Model",
+                ("gemma4:e2b"),
+            )
+      ##  if optionProvider == "Zllama":
+      ##      optionModel = st.selectbox(
+      ##          "Model",
+      ##          ("gemma4:e2b"),
+      ##      )
 
+        if(optionProvider != st.session_state.provider or optionModel != st.session_state.model):
+            ##model or provider changed, we have to update the agent
+            st.session_state.model = optionModel
+            st.session_state.provider = optionProvider
+            get_agent_anthropic.clear()
+            st.session_state.agent, st.session_state.vector_store = get_agent_anthropic()
 
     with st.sidebar:
         st.header("Document Ingestion - RAG Database")
@@ -281,16 +349,7 @@ with ((st.sidebar)):
 
 
 
-# Initialize chat history
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 
-if "agent" not in st.session_state:
-    st.session_state.agent = None
-if "vectorstore" not in st.session_state:
-    st.session_state.vectorstore = None
-if "rag_chain" not in st.session_state:
-    st.session_state.rag_chain = None
 
 ##initialize agent and vector store
 st.session_state.agent,st.session_state.vectorstore = get_agent_anthropic()
