@@ -23,11 +23,63 @@ if "inspect_prompt_enabled" not in st.session_state:
 if "inspect_response_enabled" not in st.session_state:
     st.session_state.inspect_response_enabled = True
 
+# Provider availability:
+#  - Anthropic / OpenAI require their API keys to be configured.
+#  - Ollama requires a reachable local Ollama server.
+# Probe Ollama once per session and reuse the result for provider selection
+# and the RAG (document ingestion) UI.
+_anthropic_enabled = bool(os.getenv("ANTHROPIC_API_KEY"))
+_openai_enabled = bool(os.getenv("OPENAI_API_KEY"))
+
+if "ollama_available" not in st.session_state:
+    st.session_state.ollama_available = agent_core.ollama_available()
+_ollama_enabled = st.session_state.ollama_available
+
+# Cache the list of installed Ollama models for the Model selector.
+if "ollama_models" not in st.session_state:
+    st.session_state.ollama_models = (
+        agent_core.list_ollama_models() if _ollama_enabled else []
+    )
+
+# Cache the list of available Anthropic models for the Model selector.
+if "anthropic_models" not in st.session_state:
+    st.session_state.anthropic_models = (
+        agent_core.list_anthropic_models() if _anthropic_enabled else []
+    )
+
+# Cache the list of available OpenAI models for the Model selector.
+if "openai_models" not in st.session_state:
+    st.session_state.openai_models = (
+        agent_core.list_openai_models() if _openai_enabled else []
+    )
+
 if "provider" not in st.session_state:
-    st.session_state.provider = "Anthropic"
+    if _anthropic_enabled:
+        st.session_state.provider = "Anthropic"
+    elif _openai_enabled:
+        st.session_state.provider = "OpenAI"
+    else:
+        st.session_state.provider = "Ollama"
 
 if "model" not in st.session_state:
-    st.session_state.model = "claude-haiku-4-5-20251001"
+    if _anthropic_enabled:
+        st.session_state.model = (
+            st.session_state.anthropic_models[0]
+            if st.session_state.anthropic_models
+            else "claude-haiku-4-5-20251001"
+        )
+    elif _openai_enabled:
+        st.session_state.model = (
+            st.session_state.openai_models[0]
+            if st.session_state.openai_models
+            else "gpt-4o"
+        )
+    else:
+        st.session_state.model = (
+            st.session_state.ollama_models[0]
+            if st.session_state.ollama_models
+            else "gemma4:e2b"
+        )
 
 if "mode" not in st.session_state:
     _available = agent_core.available_modes()
@@ -46,11 +98,6 @@ if "agent" not in st.session_state:
     st.session_state.agent = None
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
-
-# RAG (document ingestion) depends on Ollama for embeddings. Probe once per
-# session so the RAG UI is only shown when Ollama is actually reachable.
-if "ollama_available" not in st.session_state:
-    st.session_state.ollama_available = agent_core.ollama_available()
 
 # One persistent event loop per session. asyncio.run() closes the loop after each
 # call, which invalidates the httpx.AsyncClient held inside ChatAnthropic and the
@@ -204,25 +251,39 @@ with st.sidebar:
 
     with st.sidebar:
         st.header("Model")
+        # Only offer Anthropic / OpenAI when their API keys are configured,
+        # and Ollama only when a local Ollama server is reachable.
+        provider_options = []
+        if os.getenv("ANTHROPIC_API_KEY"):
+            provider_options.append("Anthropic")
+        if os.getenv("OPENAI_API_KEY"):
+            provider_options.append("OpenAI")
+        if st.session_state.ollama_available:
+            provider_options.append("Ollama")
+
         optionProvider = st.selectbox(
             "Provider",
-            ("Anthropic", "Zllama", "Ollama", "OpenAI"),
+            provider_options,
         )
         if optionProvider == "Anthropic":
             optionModel = st.selectbox(
                 "Model",
-                ("claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-4-8", "claude-fable-5"),
+                st.session_state.anthropic_models,
             )
         elif optionProvider == "OpenAI":
             optionModel = st.selectbox(
                 "Model",
-                ("gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4-turbo"),
+                st.session_state.openai_models,
             )
         elif optionProvider == "Ollama":
-            optionModel = st.selectbox(
-                "Model",
-                ("gemma4:e2b",),
-            )
+            if st.session_state.ollama_models:
+                optionModel = st.selectbox(
+                    "Model",
+                    st.session_state.ollama_models,
+                )
+            else:
+                st.warning("No Ollama models installed. Pull one with `ollama pull <model>`.")
+                optionModel = st.session_state.model
         else:
             st.warning(f"Provider '{optionProvider}' is not supported yet.")
             optionModel = st.session_state.model

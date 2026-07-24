@@ -55,6 +55,86 @@ def ollama_available() -> bool:
         return False
 
 
+# Fallback model list used when the Anthropic API can't be queried
+# (e.g. no network, or proxy-only auth). Keeps the model selector usable.
+_ANTHROPIC_FALLBACK_MODELS = [
+    "claude-haiku-4-5-20251001",
+    "claude-sonnet-5",
+    "claude-opus-4-8",
+    "claude-fable-5",
+]
+
+
+def list_anthropic_models() -> list[str]:
+    """Return available Anthropic model IDs.
+
+    Queries the Anthropic API when ANTHROPIC_API_KEY is set, honoring
+    ANTHROPIC_BASE_URL if present. Falls back to a static list when the request
+    fails. Returns an empty list if no API key is configured.
+    """
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        return []
+    try:
+        import anthropic
+
+        kwargs: dict = {}
+        base_url = os.getenv("ANTHROPIC_BASE_URL")
+        if base_url:
+            kwargs["base_url"] = base_url
+        client = anthropic.Anthropic(**kwargs)
+        ids = [m.id for m in client.models.list(limit=100).data]
+        return ids or _ANTHROPIC_FALLBACK_MODELS
+    except Exception:
+        return _ANTHROPIC_FALLBACK_MODELS
+
+
+# Fallback model list used when the OpenAI API can't be queried
+# (e.g. no network, or proxy-only auth). Keeps the model selector usable.
+_OPENAI_FALLBACK_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4-turbo"]
+
+
+def list_openai_models() -> list[str]:
+    """Return available OpenAI chat model IDs.
+
+    Queries the OpenAI API when OPENAI_API_KEY is set, honoring OPENAI_BASE_URL
+    if present. The models endpoint returns non-chat models too (embeddings,
+    tts, etc.), so results are filtered to chat-capable families. Falls back to
+    a static list when the request fails; returns [] if no key is configured.
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        return []
+    try:
+        import openai
+
+        kwargs: dict = {}
+        base_url = os.getenv("OPENAI_BASE_URL")
+        if base_url:
+            kwargs["base_url"] = base_url
+        client = openai.OpenAI(**kwargs)
+        ids = [m.id for m in client.models.list().data]
+        chat_ids = sorted(
+            i for i in ids if i.startswith("gpt") or i.startswith(("o1", "o3", "o4"))
+        )
+        return chat_ids or _OPENAI_FALLBACK_MODELS
+    except Exception:
+        return _OPENAI_FALLBACK_MODELS
+
+
+def list_ollama_models() -> list[str]:
+    """Return the names of models installed on the local Ollama server.
+
+    Returns an empty list if Ollama is unreachable or has no models.
+    """
+    base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    try:
+        resp = requests.get(f"{base_url}/api/tags", timeout=2)
+        resp.raise_for_status()
+        models = resp.json().get("models", [])
+        return [m["name"] for m in models if m.get("name")]
+    except (requests.RequestException, ValueError, KeyError):
+        return []
+
+
 def available_modes() -> list[str]:
     """Return inspection modes that have the required env vars configured."""
     modes = []
@@ -183,7 +263,7 @@ async def build_agent(provider: str, model: str, mode: str, mcp_config: dict[str
         if mode == "Proxy" and os.getenv("GUARDRAIL_PROXY_API_KEY"):
             llm = ChatOpenAI(
                 model=model,
-                base_url="https://proxy.zseclipse.net",
+                base_url="https://proxy.zseclipse.net/v1",
                 default_headers={"X-ApiKey": os.getenv("GUARDRAIL_PROXY_API_KEY")},
             )
         else:
@@ -237,6 +317,7 @@ async def chat(
         {"messages": [{"role": "user", "content": message}]},
         {"configurable": {"thread_id": thread_id}},
     )
+
 
     # Pair each tool_use block with its matching ToolMessage result
     tool_trace: list[dict] = []

@@ -2,7 +2,7 @@
 
 A demo project showing how Zscaler AI Guard an be integrated into a LangChain / LangGraph agent pipeline. AI Guard inspects prompts (IN) and responses (OUT) and can **allow**, **mask**, or **block** traffic before it reaches — or leaves — the LLM.
 
-It allows to demo the integration of an AI Agent with AI Guard where AI Guard can be used to inspect and protect prompts/responses. It also showcases the integration with external MCP servers. A default MCP server is configured and points to dlptest.com for DLP testing. Note: to get your own Anthropic key , please visit : https://platform.claude.com/
+It allows to demo the integration of an AI Agent with AI Guard where AI Guard can be used to inspect and protect prompts/responses. It also showcases the integration with external MCP servers. A default MCP server is configured and points to dlptest.com for DLP testing. 
 
 
 It ships two entry points that share the same agent core:
