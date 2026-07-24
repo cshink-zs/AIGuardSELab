@@ -115,7 +115,7 @@ def run_async(coro):
 
 st.set_page_config(page_title="AI Guard", page_icon="✨")
 st.header("AI Guard - Demo agent")
-st.divider()
+##st.divider()
 
 load_dotenv()
 
@@ -178,7 +178,7 @@ def generate_response(input_text: str):
 
 
 with st.sidebar:
-    st.header("AI Guard Inspection")
+
 
     modes = agent_core.available_modes()
 
@@ -194,7 +194,7 @@ with st.sidebar:
             reset_agent()
 
         newmode = st.radio(
-            "Inspection mode:", modes,
+            "AI Guard Inspection mode:", modes,
             index=modes.index(st.session_state.mode),
         )
         if newmode != st.session_state.mode:
@@ -211,8 +211,8 @@ with st.sidebar:
                 value=st.session_state.inspect_response_enabled,
             )
 
-    with st.sidebar:
-        st.header("AI Guard Configuration")
+    with st.expander("AI Guard Configuration"):
+
 
         guardrail_vars = {k: v for k, v in os.environ.items() if k.startswith("GUARDRAIL_")}
 
@@ -249,8 +249,8 @@ with st.sidebar:
                     else:
                         st.info("No changes detected.")
 
-    with st.sidebar:
-        st.header("Model")
+    with st.expander("Model"):
+
         # Only offer Anthropic / OpenAI when their API keys are configured,
         # and Ollama only when a local Ollama server is reachable.
         provider_options = []
@@ -293,8 +293,8 @@ with st.sidebar:
             st.session_state.model = optionModel
             reset_agent()
 
-    with st.sidebar:
-        st.header("MCP Tools")
+    with st.expander("MCP Tools"):
+
 
         if not st.session_state.mcp_tools_config:
             st.caption("No MCP tools configured.")
@@ -345,8 +345,8 @@ with st.sidebar:
     # RAG document ingestion needs Ollama (nomic-embed-text) for embeddings.
     # Only show this section when Ollama is reachable.
     if st.session_state.ollama_available:
-        with st.sidebar:
-            st.header("Document Ingestion - RAG Database")
+        with st.expander("Document Ingestion - Local RAG DB"):
+
             uploaded_file = st.file_uploader("Upload a text file (.txt)", type=["txt"])
             if uploaded_file is not None:
                 if st.button("Process & Build Knowledge Base", type="primary"):
